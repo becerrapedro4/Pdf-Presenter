@@ -99,7 +99,6 @@ class DocumentItem(QFrame):
 
 
 class PDFPresenter(QMainWindow):
-    _license_key = "216573AE419CC" # Updated license key
     _trial_duration_secs = 15 * 60 # 15 minutes in seconds
     _license_state_file = "pdf_presenter_license.json" # File to store license state
 
