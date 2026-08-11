@@ -46,6 +46,24 @@ pyinstaller PDFPresenter6.spec --noconfirm
 
 El ejecutable queda en `dist\PDFPresenter6.exe` con la DLL de NDI 6 y el ícono incluidos.
 
+## Descargas e instaladores
+
+Cada release se compila automáticamente en CI para los 3 sistemas operativos y publica:
+
+- **Assets del release** (https://github.com/becerrapedro4/Pdf-Presenter/releases): `PDFPresenter6-win64.exe`, `PDFPresenter6-macos.dmg`, `PDFPresenter6-linux.AppImage`.
+- **GitHub Packages** (registro genérico vía GHCR + ORAS): `pdf-presenter-win64`, `pdf-presenter-macos` y `pdf-presenter-linux`, con tag = versión (ej. `6.1`).
+
+Para descargar desde GitHub Packages:
+
+```bash
+# instalar ORAS: https://oras.land
+oras pull ghcr.io/becerrapedro4/pdf-presenter-win64:6.1
+oras pull ghcr.io/becerrapedro4/pdf-presenter-macos:6.1
+oras pull ghcr.io/becerrapedro4/pdf-presenter-linux:6.1
+```
+
+> Los paquetes quedan visibles en la pestaña **Packages** del repositorio. Windows firma con SignPath cuando se configuran los secretos; macOS/Linux no se firman.
+
 ## Uso rápido
 
 1. **Cargá** tus PDFs (botón, arrastrar y soltar, o pasándolos como argumento).
