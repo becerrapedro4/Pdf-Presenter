@@ -48,6 +48,33 @@ if NDI_DLL is None:
     )
 print(f"NDI DLL: {NDI_DLL}")
 
+# --- Paquete NDIlib ---
+# NDIlib es un módulo compilado (.pyd) que al importarse crashea el subproceso
+# aislado de análisis de PyInstaller en algunas versiones de Python. Por eso se
+# EXCLUYE del análisis y se incluye manualmente (pyd + DLL + __init__.py).
+
+def _ndilib_package_dir():
+    import importlib.util
+    spec = importlib.util.find_spec("NDIlib")
+    if spec and spec.submodule_search_locations:
+        return list(spec.submodule_search_locations)[0]
+    return None
+
+
+NDILIB_DIR = _ndilib_package_dir()
+ndilib_binaries = []
+ndilib_datas = []
+if NDILIB_DIR:
+    for f in os.listdir(NDILIB_DIR):
+        p = os.path.join(NDILIB_DIR, f)
+        if f.endswith((".pyd", ".dll")):
+            ndilib_binaries.append((p, "NDIlib"))
+        elif f.endswith((".py", ".txt", ".json", ".md")):
+            ndilib_datas.append((p, "NDIlib"))
+    print(f"NDIlib empaquetado desde: {NDILIB_DIR} ({len(ndilib_binaries)} binarios, {len(ndilib_datas)} datos)")
+else:
+    print("Advertencia: no se encontró el paquete NDIlib; NDI no funcionará en el exe.")
+
 # --- Configuración del Análisis ---
 a = Analysis(
     ['PDFPresenter6.py'],
@@ -55,10 +82,10 @@ a = Analysis(
     binaries=[
         # Incluir la DLL de NDI 6 dentro del ejecutable
         (NDI_DLL, '.'),
-    ],
+    ] + ndilib_binaries,
     datas=[
         ('icon.ico', '.'),
-    ],
+    ] + ndilib_datas,
     # --- Forzar la inclusión de TODOS los módulos problemáticos ---
     hiddenimports=[
         # Numpy completo
@@ -91,10 +118,6 @@ a = Analysis(
         'numpy.random.mtrand',
         'numpy.fft',
 
-        # NDI
-        'NDIlib',
-        'NDIlib.ndi',
-
         # PyMuPDF
         'fitz',
         'fitz.fitz',
@@ -121,6 +144,10 @@ a = Analysis(
         'PyQt5.QtNetwork',
         'PyQt5.QtSql',
         'PyQt5.QtTest',
+        # NDIlib se incluye manualmente (ver arriba); excluirlo evita que
+        # PyInstaller lo importe en el subproceso aislado de análisis.
+        'NDIlib',
+        'NDIlib.ndi',
     ],
     hookspath=[],
     hooksconfig={},
