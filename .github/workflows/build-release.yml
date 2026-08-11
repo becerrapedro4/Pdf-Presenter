@@ -1,9 +1,12 @@
 name: Build y Release
 
-# Se ejecuta al crear un release (incluye drafts) o manualmente desde Actions.
+# Se ejecuta al publicar un release, al pushear un tag v* (crea el release
+# si no existe), o manualmente desde Actions (solo compila y deja el artifact).
 on:
+  push:
+    tags: ['v*']
   release:
-    types: [created]
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -97,8 +100,20 @@ jobs:
           ls -la dist/
 
       - name: Subir .exe al release
-        if: github.event_name == 'release'
+        if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" dist/PDFPresenter6.exe --clobber
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RELEASE="${{ github.event.release.tag_name }}"
+          else
+            RELEASE="${{ github.ref_name }}"
+          fi
+          echo "Release objetivo: $RELEASE"
+          if gh release view "$RELEASE" >/dev/null 2>&1; then
+            gh release upload "$RELEASE" dist/PDFPresenter6.exe --clobber
+          else
+            gh release create "$RELEASE" dist/PDFPresenter6.exe \
+              --title "PDF Presenter $RELEASE" --generate-notes
+          fi
