@@ -119,10 +119,16 @@ jobs:
             RELEASE="${{ github.ref_name }}"
           fi
           echo "Release objetivo: $RELEASE"
-          if gh release view "$RELEASE" >/dev/null 2>&1; then
-            gh release upload "$RELEASE" "dist/${{ matrix.artifact }}" --clobber
-          else
+          if ! gh release view "$RELEASE" >/dev/null 2>&1; then
             gh release create "$RELEASE" "dist/${{ matrix.artifact }}" \
-              --title "PDF Presenter $RELEASE" --generate-notes \
-              || gh release upload "$RELEASE" "dist/${{ matrix.artifact }}" --clobber
+              --title "PDF Presenter $RELEASE" --generate-notes || true
           fi
+          # Reintentos por si el release recién creado aún no propaga (404 transitorio)
+          for i in 1 2 3 4 5; do
+            if gh release upload "$RELEASE" "dist/${{ matrix.artifact }}" --clobber; then
+              echo "✅ ${{ matrix.artifact }} subido al release"
+              break
+            fi
+            echo "Reintento $i/5 para subir ${{ matrix.artifact }}..."
+            sleep 10
+          done
