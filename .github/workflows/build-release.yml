@@ -1,0 +1,104 @@
+name: Build y Release
+
+# Se ejecuta al crear un release (incluye drafts) o manualmente desde Actions.
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # para subir el .exe como asset del release
+  actions: read     # requerido por el paso de firma de SignPath
+
+jobs:
+  build-windows:
+    name: Compilar PDFPresenter6.exe (Windows)
+    runs-on: windows-latest
+    env:
+      # Si existe el secreto SIGNPATH_API_TOKEN, el paso de firma corre.
+      HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PyQt5 PyMuPDF numpy ndi-python
+
+      # ndi-python trae la DLL de NDI dentro del paquete; se copia a la raíz
+      # del repo para que PDFPresenter6.spec la encuentre en CI.
+      - name: Copiar DLL de NDI
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import os, shutil
+          from NDIlib import __file__ as ndi_file
+          pkg = os.path.dirname(ndi_file)
+          dlls = [f for f in os.listdir(pkg) if f.lower().endswith('.dll')]
+          if not dlls:
+              raise SystemExit('No se encontraron DLLs de NDI en ndi-python')
+          for f in dlls:
+              shutil.copy(os.path.join(pkg, f), '.')
+          print('NDI DLLs copiadas:', dlls)
+          EOF
+
+      - name: Compilar con PyInstaller
+        run: python -m PyInstaller PDFPresenter6.spec --noconfirm
+
+      - name: Verificar ejecutable
+        run: |
+          if (!(Test-Path "dist\PDFPresenter6.exe")) { throw "No se generó dist\PDFPresenter6.exe" }
+          $len = (Get-Item "dist\PDFPresenter6.exe").Length
+          Write-Output "exe generado: $len bytes"
+          if ($len -lt 50MB) { throw "El ejecutable parece demasiado pequeño ($len bytes)" }
+
+      - name: Subir exe sin firmar (artifact)
+        id: upload-unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: PDFPresenter6-unsigned
+          path: dist/PDFPresenter6.exe
+          archive: false
+
+      # ---- FIRMA OPCIONAL (SignPath Foundation - gratis para open source) ----
+      # Para activarla:
+      #   1. Solicitá la firma OSS en https://signpath.org (requiere licencia OSI
+      #      en el repo y que el binario se genere en runners de GitHub).
+      #   2. Agregá estos secretos al repo: SIGNPATH_API_TOKEN,
+      #      SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG,
+      #      SIGNPATH_SIGNING_POLICY_SLUG.
+      - name: Firmar con SignPath
+        if: env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist-signed
+          # parameters: |            # descomentar si la política lo requiere
+          #   version: "6.0"
+
+      - name: Usar el exe firmado si existe
+        shell: bash
+        run: |
+          if [ -f dist-signed/PDFPresenter6.exe ]; then
+            cp dist-signed/PDFPresenter6.exe dist/PDFPresenter6.exe
+            echo "✅ exe firmado listo"
+          else
+            echo "⚠️  sin firma configurada - el release quedará sin firmar"
+          fi
+          ls -la dist/
+
+      - name: Subir .exe al release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/PDFPresenter6.exe --clobber

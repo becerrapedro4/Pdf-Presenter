@@ -11,9 +11,42 @@ except NameError:
 
 print(f"Project root directory: {project_root}")
 
-# --- Ruta del SDK de NDI 6 ---
+# --- DLL de NDI 6 ---
 NDI_SDK_DIR = r"C:\Program Files\NDI\NDI 6 SDK"
 NDI_BIN_DIR = os.path.join(NDI_SDK_DIR, "Bin", "x64")
+
+
+def _find_ndi_dll():
+    """Ubica la DLL de NDI en: el SDK instalado, el repo, o el paquete
+    ndi-python (permite compilar en CI sin el SDK de NDI instalado)."""
+    import importlib.util
+
+    candidates = [
+        os.path.join(NDI_BIN_DIR, "Processing.NDI.Lib.x64.dll"),
+        os.path.join(project_root, "Processing.NDI.Lib.x64.dll"),
+    ]
+    try:
+        spec = importlib.util.find_spec("NDIlib")
+        if spec and spec.submodule_search_locations:
+            pkg_dir = list(spec.submodule_search_locations)[0]
+            for f in os.listdir(pkg_dir):
+                if f.lower().endswith(".dll") and "ndi" in f.lower():
+                    candidates.append(os.path.join(pkg_dir, f))
+    except Exception:
+        pass
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
+NDI_DLL = _find_ndi_dll()
+if NDI_DLL is None:
+    raise SystemExit(
+        "No se encontró la DLL de NDI (Processing.NDI.Lib.x64.dll). "
+        "Instalá el SDK de NDI o el paquete ndi-python (pip install ndi-python)."
+    )
+print(f"NDI DLL: {NDI_DLL}")
 
 # --- Configuración del Análisis ---
 a = Analysis(
@@ -21,7 +54,7 @@ a = Analysis(
     pathex=[project_root],
     binaries=[
         # Incluir la DLL de NDI 6 dentro del ejecutable
-        (os.path.join(NDI_BIN_DIR, 'Processing.NDI.Lib.x64.dll'), '.'),
+        (NDI_DLL, '.'),
     ],
     datas=[
         ('icon.ico', '.'),

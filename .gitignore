@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Build de PyInstaller
+build/
+dist/
+
+# Logs de la aplicación
+pdf_presenter_error.log
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Credenciales / secretos locales
+*.pem
+*.pfx
