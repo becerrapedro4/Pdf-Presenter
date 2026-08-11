@@ -16,6 +16,7 @@ NDI_SDK_DIR = r"C:\Program Files\NDI\NDI 6 SDK"
 NDI_BIN_DIR = os.path.join(NDI_SDK_DIR, "Bin", "x64")
 
 _IS_WINDOWS = sys.platform.startswith("win")
+_IS_MACOS = sys.platform == "darwin"
 
 
 def _find_ndi_lib():
@@ -160,25 +161,65 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 # --- Configuración del Ejecutable ---
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='PDFPresenter6',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,  # Desactivar UPX para evitar conflictos con numpy
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,  # Cambiar a True solo para debug
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon='icon.ico' if _IS_WINDOWS else None,
-)
+if _IS_MACOS:
+    # macOS: one-dir + BUNDLE para generar el .app (luego el workflow arma el .dmg)
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='PDFPresenter6',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name='PDFPresenter6',
+    )
+    app = BUNDLE(
+        coll,
+        name='PDFPresenter6.app',
+        icon=None,
+        bundle_identifier='com.becerra.pdfpresenter',
+        info_plist={
+            'NSHighResolutionCapable': True,
+            'CFBundleDisplayName': 'PDF Presenter',
+            'CFBundleShortVersionString': '6.1',
+            'CFBundleVersion': '6.1',
+        },
+    )
+else:
+    # Windows y Linux: one-file (un solo ejecutable)
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='PDFPresenter6',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,  # Desactivar UPX para evitar conflictos con numpy
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,  # Cambiar a True solo para debug
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='icon.ico' if _IS_WINDOWS else None,
+    )

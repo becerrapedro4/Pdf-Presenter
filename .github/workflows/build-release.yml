@@ -26,10 +26,10 @@ jobs:
             artifact: PDFPresenter6-win64.exe
           - os: macos-latest
             label: macOS
-            artifact: PDFPresenter6-macos
+            artifact: PDFPresenter6-macos.dmg
           - os: ubuntu-latest
             label: Linux
-            artifact: PDFPresenter6-linux
+            artifact: PDFPresenter6-linux.AppImage
     env:
       # Si existe el secreto SIGNPATH_API_TOKEN, el paso de firma corre (solo Windows).
       HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
@@ -51,15 +51,49 @@ jobs:
       - name: Compilar con PyInstaller
         run: python -m PyInstaller PDFPresenter6.spec --noconfirm
 
-      - name: Renombrar ejecutable
+      # ---------- Empaquetado por plataforma ----------
+      - name: Empaquetar .exe (Windows)
+        if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          if [ -f "dist/PDFPresenter6.exe" ]; then
-            SRC="dist/PDFPresenter6.exe"
-          else
-            SRC="dist/PDFPresenter6"
-          fi
-          mv "$SRC" "dist/${{ matrix.artifact }}"
+          mv dist/PDFPresenter6.exe "dist/${{ matrix.artifact }}"
+          ls -la dist/
+
+      - name: Empaquetar .dmg (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          test -d dist/PDFPresenter6.app || { echo "No se generó el .app"; exit 1; }
+          hdiutil create -volname "PDF Presenter" \
+            -srcfolder dist/PDFPresenter6.app \
+            -ov -format UDZO "dist/${{ matrix.artifact }}"
+          ls -la dist/
+
+      - name: Empaquetar AppImage (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp dist/PDFPresenter6 AppDir/usr/bin/
+          cp icon.png AppDir/
+          cat > AppDir/PDFPresenter6.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=PDF Presenter
+          Comment=Presentador de PDFs con NDI
+          Exec=PDFPresenter6
+          Icon=icon
+          Categories=Office;Presentation;
+          EOF
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/bash
+          exec "$APPDIR/usr/bin/PDFPresenter6" "$@"
+          EOF
+          chmod +x AppDir/AppRun AppDir/usr/bin/PDFPresenter6
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+          /tmp/appimagetool --appimage-extract-and-run AppDir "dist/${{ matrix.artifact }}"
+          ls -la dist/
 
       - name: Verificar ejecutable
         shell: bash
