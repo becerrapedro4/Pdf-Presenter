@@ -157,6 +157,23 @@ a = Analysis(
     noarchive=False,
 )
 
+# --- Runtime de VC ---
+# El wheel de PyQt5 trae MSVCP140.dll/vcruntime140*.dll en Qt5/bin; al
+# empaquetarlas junto con las del sistema se mezclan versiones y la app
+# crashea con 0xc0000005. Se quitan del bundle: Windows usa las instaladas
+# en el sistema (presentes en cualquier equipo con apps modernas).
+if _IS_WINDOWS:
+    _VC_RUNTIME_DLLS = {
+        "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+        "msvcp140_atomic_wait.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+        "concrt140.dll",
+    }
+    a.binaries = [
+        b for b in a.binaries
+        if os.path.basename(b[0]).lower() not in _VC_RUNTIME_DLLS
+    ]
+    print("Runtime de VC quitado del bundle (usa el del sistema)")
+
 # --- Configuración del PYZ ---
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
