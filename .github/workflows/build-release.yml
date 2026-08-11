@@ -2,6 +2,8 @@ name: Build y Release
 
 # Se ejecuta al publicar un release, al pushear un tag v* (crea el release
 # si no existe), o manualmente desde Actions (solo compila y deja artifacts).
+# En cada release/tag tambien publica los instaladores en GitHub Packages
+# (GHCR + ORAS, el estandar para binarios genericos).
 on:
   push:
     tags: ['v*']
@@ -12,6 +14,7 @@ on:
 permissions:
   contents: write   # para subir los ejecutables como assets del release
   actions: read     # requerido por el paso de firma de SignPath
+  packages: write   # para publicar los instaladores en GitHub Packages (GHCR)
 
 jobs:
   build:
@@ -24,12 +27,15 @@ jobs:
           - os: windows-latest
             label: Windows
             artifact: PDFPresenter6-win64.exe
+            slug: win64
           - os: macos-latest
             label: macOS
             artifact: PDFPresenter6-macos.dmg
+            slug: macos
           - os: ubuntu-latest
             label: Linux
             artifact: PDFPresenter6-linux.AppImage
+            slug: linux
     env:
       # Si existe el secreto SIGNPATH_API_TOKEN, el paso de firma corre (solo Windows).
       HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
@@ -166,3 +172,33 @@ jobs:
             echo "Reintento $i/5 para subir ${{ matrix.artifact }}..."
             sleep 10
           done
+
+      # ---- GITHUB PACKAGES (registro de paquetes genéricos vía GHCR + ORAS) ----
+      # GitHub no tiene un registro "genérico" nativo; la vía estándar es publicar
+      # los binarios como artefactos OCI en GHCR con ORAS. Cada plataforma publica
+      # su instalador como un paquete propio (pdf-presenter-win64/macos/linux) con
+      # tag = versión del release (ej. 6.1). Se descarga con:
+      #   oras pull ghcr.io/becerrapedro4/pdf-presenter-win64:6.1
+      - name: Instalar ORAS (para GitHub Packages)
+        if: github.event_name != 'workflow_dispatch'
+        uses: oras-project/setup-oras@v1
+
+      - name: Publicar en GitHub Packages (GHCR + ORAS)
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          PKG_TAG="${TAG#v}"
+          PKG="ghcr.io/${{ github.repository_owner }}/pdf-presenter-${{ matrix.slug }}"
+          echo "Publicando ${{ matrix.artifact }} en $PKG:$PKG_TAG"
+          echo "$GHCR_TOKEN" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+          oras push --artifact-type "application/vnd.pdfpresenter.release" \
+            "$PKG:$PKG_TAG" \
+            "dist/${{ matrix.artifact }}"
+          echo "✅ ${{ matrix.artifact }} publicado en GitHub Packages ($PKG:$PKG_TAG)"
