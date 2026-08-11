@@ -1,7 +1,7 @@
 name: Build y Release
 
 # Se ejecuta al publicar un release, al pushear un tag v* (crea el release
-# si no existe), o manualmente desde Actions (solo compila y deja el artifact).
+# si no existe), o manualmente desde Actions (solo compila y deja artifacts).
 on:
   push:
     tags: ['v*']
@@ -10,15 +10,28 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # para subir el .exe como asset del release
+  contents: write   # para subir los ejecutables como assets del release
   actions: read     # requerido por el paso de firma de SignPath
 
 jobs:
-  build-windows:
-    name: Compilar PDFPresenter6.exe (Windows)
-    runs-on: windows-latest
+  build:
+    name: Compilar (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            artifact: PDFPresenter6-win64.exe
+          - os: macos-latest
+            label: macOS
+            artifact: PDFPresenter6-macos
+          - os: ubuntu-latest
+            label: Linux
+            artifact: PDFPresenter6-linux
     env:
-      # Si existe el secreto SIGNPATH_API_TOKEN, el paso de firma corre.
+      # Si existe el secreto SIGNPATH_API_TOKEN, el paso de firma corre (solo Windows).
       HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
@@ -30,41 +43,36 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller PyQt5 PyMuPDF numpy ndi-python
-
-      # ndi-python trae la DLL de NDI dentro del paquete; se copia a la raíz
-      # del repo para que PDFPresenter6.spec la encuentre en CI.
-      - name: Copiar DLL de NDI
-        shell: bash
-        run: |
-          python - <<'EOF'
-          import os, shutil
-          from NDIlib import __file__ as ndi_file
-          pkg = os.path.dirname(ndi_file)
-          dlls = [f for f in os.listdir(pkg) if f.lower().endswith('.dll')]
-          if not dlls:
-              raise SystemExit('No se encontraron DLLs de NDI en ndi-python')
-          for f in dlls:
-              shutil.copy(os.path.join(pkg, f), '.')
-          print('NDI DLLs copiadas:', dlls)
-          EOF
+          pip install pyinstaller PyQt5 PyMuPDF numpy
+          # NDI es opcional: si el paquete no está disponible en la plataforma,
+          # el build continúa y la app arranca con NDI desactivado.
+          pip install ndi-python || echo "⚠️ ndi-python no disponible; NDI quedará desactivado"
 
       - name: Compilar con PyInstaller
         run: python -m PyInstaller PDFPresenter6.spec --noconfirm
 
-      - name: Verificar ejecutable
+      - name: Renombrar ejecutable
+        shell: bash
         run: |
-          if (!(Test-Path "dist\PDFPresenter6.exe")) { throw "No se generó dist\PDFPresenter6.exe" }
-          $len = (Get-Item "dist\PDFPresenter6.exe").Length
-          Write-Output "exe generado: $len bytes"
-          if ($len -lt 50MB) { throw "El ejecutable parece demasiado pequeño ($len bytes)" }
+          if [ -f "dist/PDFPresenter6.exe" ]; then
+            SRC="dist/PDFPresenter6.exe"
+          else
+            SRC="dist/PDFPresenter6"
+          fi
+          mv "$SRC" "dist/${{ matrix.artifact }}"
 
-      - name: Subir exe sin firmar (artifact)
+      - name: Verificar ejecutable
+        shell: bash
+        run: |
+          ls -la "dist/${{ matrix.artifact }}"
+          test -s "dist/${{ matrix.artifact }}" && echo "OK: ${{ matrix.artifact }}"
+
+      - name: Subir ejecutable sin firmar (artifact)
         id: upload-unsigned
         uses: actions/upload-artifact@v7
         with:
-          name: PDFPresenter6-unsigned
-          path: dist/PDFPresenter6.exe
+          name: ${{ matrix.artifact }}-unsigned
+          path: dist/${{ matrix.artifact }}
           archive: false
 
       # ---- FIRMA OPCIONAL (SignPath Foundation - gratis para open source) ----
@@ -74,8 +82,8 @@ jobs:
       #   2. Agregá estos secretos al repo: SIGNPATH_API_TOKEN,
       #      SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG,
       #      SIGNPATH_SIGNING_POLICY_SLUG.
-      - name: Firmar con SignPath
-        if: env.HAS_SIGNPATH == 'true'
+      - name: Firmar con SignPath (solo Windows)
+        if: env.HAS_SIGNPATH == 'true' && matrix.os == 'windows-latest'
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -86,20 +94,20 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: dist-signed
           # parameters: |            # descomentar si la política lo requiere
-          #   version: "6.0"
+          #   version: "6.1"
 
-      - name: Usar el exe firmado si existe
+      - name: Usar el ejecutable firmado si existe
+        if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          if [ -f dist-signed/PDFPresenter6.exe ]; then
-            cp dist-signed/PDFPresenter6.exe dist/PDFPresenter6.exe
-            echo "✅ exe firmado listo"
+          if [ -f "dist-signed/${{ matrix.artifact }}" ]; then
+            cp "dist-signed/${{ matrix.artifact }}" "dist/${{ matrix.artifact }}"
+            echo "✅ ejecutable firmado listo"
           else
             echo "⚠️  sin firma configurada - el release quedará sin firmar"
           fi
-          ls -la dist/
 
-      - name: Subir .exe al release
+      - name: Subir ejecutable al release
         if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -112,8 +120,9 @@ jobs:
           fi
           echo "Release objetivo: $RELEASE"
           if gh release view "$RELEASE" >/dev/null 2>&1; then
-            gh release upload "$RELEASE" dist/PDFPresenter6.exe --clobber
+            gh release upload "$RELEASE" "dist/${{ matrix.artifact }}" --clobber
           else
-            gh release create "$RELEASE" dist/PDFPresenter6.exe \
-              --title "PDF Presenter $RELEASE" --generate-notes
+            gh release create "$RELEASE" "dist/${{ matrix.artifact }}" \
+              --title "PDF Presenter $RELEASE" --generate-notes \
+              || gh release upload "$RELEASE" "dist/${{ matrix.artifact }}" --clobber
           fi

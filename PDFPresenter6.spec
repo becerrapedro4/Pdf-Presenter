@@ -11,26 +11,29 @@ except NameError:
 
 print(f"Project root directory: {project_root}")
 
-# --- DLL de NDI 6 ---
+# --- Librería nativa de NDI (Windows: SDK o ndi-python; macOS/Linux: ndi-python) ---
 NDI_SDK_DIR = r"C:\Program Files\NDI\NDI 6 SDK"
 NDI_BIN_DIR = os.path.join(NDI_SDK_DIR, "Bin", "x64")
 
+_IS_WINDOWS = sys.platform.startswith("win")
 
-def _find_ndi_dll():
-    """Ubica la DLL de NDI en: el SDK instalado, el repo, o el paquete
-    ndi-python (permite compilar en CI sin el SDK de NDI instalado)."""
+
+def _find_ndi_lib():
+    """Ubica la librería nativa de NDI (Processing.NDI.Lib.*) en el SDK de
+    Windows, en el repo, o en el paquete ndi-python (para CI sin SDK)."""
     import importlib.util
 
-    candidates = [
-        os.path.join(NDI_BIN_DIR, "Processing.NDI.Lib.x64.dll"),
-        os.path.join(project_root, "Processing.NDI.Lib.x64.dll"),
-    ]
+    candidates = []
+    if _IS_WINDOWS:
+        candidates.append(os.path.join(NDI_BIN_DIR, "Processing.NDI.Lib.x64.dll"))
+        candidates.append(os.path.join(project_root, "Processing.NDI.Lib.x64.dll"))
     try:
         spec = importlib.util.find_spec("NDIlib")
         if spec and spec.submodule_search_locations:
             pkg_dir = list(spec.submodule_search_locations)[0]
             for f in os.listdir(pkg_dir):
-                if f.lower().endswith(".dll") and "ndi" in f.lower():
+                low = f.lower()
+                if "ndi" in low and low.endswith((".dll", ".dylib", ".so")):
                     candidates.append(os.path.join(pkg_dir, f))
     except Exception:
         pass
@@ -40,18 +43,16 @@ def _find_ndi_dll():
     return None
 
 
-NDI_DLL = _find_ndi_dll()
+NDI_DLL = _find_ndi_lib()
 if NDI_DLL is None:
-    raise SystemExit(
-        "No se encontró la DLL de NDI (Processing.NDI.Lib.x64.dll). "
-        "Instalá el SDK de NDI o el paquete ndi-python (pip install ndi-python)."
-    )
-print(f"NDI DLL: {NDI_DLL}")
+    print("Advertencia: no se encontró la librería nativa de NDI; el build saldrá SIN NDI.")
+else:
+    print(f"NDI nativo: {NDI_DLL}")
 
 # --- Paquete NDIlib ---
-# NDIlib es un módulo compilado (.pyd) que al importarse crashea el subproceso
+# NDIlib es un módulo compilado (pyd/so) que al importarse crashea el subproceso
 # aislado de análisis de PyInstaller en algunas versiones de Python. Por eso se
-# EXCLUYE del análisis y se incluye manualmente (pyd + DLL + __init__.py).
+# EXCLUYE del análisis y se incluye manualmente (módulo + librería + __init__.py).
 
 def _ndilib_package_dir():
     import importlib.util
@@ -67,22 +68,19 @@ ndilib_datas = []
 if NDILIB_DIR:
     for f in os.listdir(NDILIB_DIR):
         p = os.path.join(NDILIB_DIR, f)
-        if f.endswith((".pyd", ".dll")):
+        if f.endswith((".pyd", ".so", ".dylib", ".dll")):
             ndilib_binaries.append((p, "NDIlib"))
         elif f.endswith((".py", ".txt", ".json", ".md")):
             ndilib_datas.append((p, "NDIlib"))
     print(f"NDIlib empaquetado desde: {NDILIB_DIR} ({len(ndilib_binaries)} binarios, {len(ndilib_datas)} datos)")
 else:
-    print("Advertencia: no se encontró el paquete NDIlib; NDI no funcionará en el exe.")
+    print("Advertencia: no se encontró el paquete NDIlib; NDI no funcionará en el build.")
 
 # --- Configuración del Análisis ---
 a = Analysis(
     ['PDFPresenter6.py'],
     pathex=[project_root],
-    binaries=[
-        # Incluir la DLL de NDI 6 dentro del ejecutable
-        (NDI_DLL, '.'),
-    ] + ndilib_binaries,
+    binaries=([(NDI_DLL, '.')] if NDI_DLL else []) + ndilib_binaries,
     datas=[
         ('icon.ico', '.'),
     ] + ndilib_datas,
@@ -182,5 +180,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico',
+    icon='icon.ico' if _IS_WINDOWS else None,
 )

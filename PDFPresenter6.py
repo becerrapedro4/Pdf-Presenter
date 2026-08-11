@@ -10,28 +10,45 @@ import hashlib
 from collections import OrderedDict
 from datetime import datetime, timedelta
 import numpy as np
-import NDIlib as ndi
+
+try:
+    import NDIlib as ndi
+except Exception:
+    # NDI es opcional: sin el paquete instalado la app funciona igual,
+    # solo se deshabilita el toggle NDI.
+    ndi = None
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QFileDialog,
     QVBoxLayout, QHBoxLayout, QProgressBar, QComboBox, QSizePolicy, QStackedWidget,
     QScrollArea, QMessageBox, QFrame, QGridLayout, QProgressDialog, QLineEdit, QDialog,
     QAction, QCheckBox, QInputDialog, QSplitter, QRadioButton
 )
-from PyQt5.QtCore import Qt, QSize, QTime, QTimer, QMimeData, QDateTime, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QTime, QTimer, QMimeData, QDateTime, QThread, pyqtSignal, QSettings
 from PyQt5.QtGui import (
     QGuiApplication, QPixmap, QImage, QIcon, QFont, QDrag,
     QPainter, QColor, QRadialGradient, QCursor, QPen, QBrush
 )
 from PyQt5.QtPrintSupport import QPrinter, QPrintDialog
 
-# ------- Registro de Windows -------
-import winreg
+# ------- Persistencia de licencia -------
+# En Windows se usa el registro (comportamiento histórico, claves existentes
+# intactas). En macOS/Linux se usa QSettings, que guarda en la configuración
+# del usuario de la plataforma.
+try:
+    import winreg
+    _HAS_WINREG = True
+except ImportError:
+    winreg = None
+    _HAS_WINREG = False
 
 REG_PATH = r"Software\PDFPresenter"
 REG_KEY_LICENSE = "LicenseStatus"
 REG_KEY_TRIAL_EXP = "TrialExpiration"
 
 DOC_DRAG_MIME = "application/x-pdfpresenter-doc-index"
+
+_settings = QSettings("PDFPresenter", "PDFPresenter")
 
 
 def resource_path(name):
@@ -41,30 +58,48 @@ def resource_path(name):
 
 
 def read_registry(key, default=None):
+    if _HAS_WINREG:
+        try:
+            reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
+            value, _ = winreg.QueryValueEx(reg, key)
+            winreg.CloseKey(reg)
+            return value
+        except Exception:
+            return default
     try:
-        reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_READ)
-        value, _ = winreg.QueryValueEx(reg, key)
-        winreg.CloseKey(reg)
-        return value
+        return _settings.value(key, default)
     except Exception:
         return default
 
 
 def write_registry(key, value):
+    if _HAS_WINREG:
+        try:
+            reg = winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_PATH)
+            winreg.SetValueEx(reg, key, 0, winreg.REG_SZ, str(value))
+            winreg.CloseKey(reg)
+            return True
+        except Exception:
+            return False
     try:
-        reg = winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_PATH)
-        winreg.SetValueEx(reg, key, 0, winreg.REG_SZ, str(value))
-        winreg.CloseKey(reg)
+        _settings.setValue(key, str(value))
+        _settings.sync()
         return True
     except Exception:
         return False
 
 
 def delete_registry(key):
+    if _HAS_WINREG:
+        try:
+            reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(reg, key)
+            winreg.CloseKey(reg)
+        except Exception:
+            pass
+        return
     try:
-        reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH, 0, winreg.KEY_SET_VALUE)
-        winreg.DeleteValue(reg, key)
-        winreg.CloseKey(reg)
+        _settings.remove(key)
     except Exception:
         pass
 
@@ -614,7 +649,11 @@ class PDFPresenter(QMainWindow):
 
     def _update_ndi_toggle_state(self):
         if self.toggle_ndi is not None:
-            if self._full_license_activated:
+            if ndi is None:
+                self.toggle_ndi.setChecked(False)
+                self.toggle_ndi.setEnabled(False)
+                self.toggle_ndi.setToolTip("NDI no disponible en esta plataforma")
+            elif self._full_license_activated:
                 self.toggle_ndi.setEnabled(True)
                 self.toggle_ndi.setToolTip("Activar/desactivar salida NDI")
             else:
@@ -1820,6 +1859,9 @@ class PDFPresenter(QMainWindow):
 
     # ---------- NDI ----------
     def start_ndi_sender(self):
+        if ndi is None:
+            QMessageBox.warning(self, "NDI no disponible", "El módulo NDI no está disponible en esta plataforma.")
+            return
         if not self._full_license_activated:
             QMessageBox.warning(self, "NDI no disponible", "La función NDI requiere licencia completa.")
             return
@@ -1848,7 +1890,7 @@ class PDFPresenter(QMainWindow):
             self._ndi_timer.stop()
 
     def update_ndi_frame(self, pixmap=None):
-        if not self.ndi_enabled or not self.ndi_sender:
+        if ndi is None or not self.ndi_enabled or not self.ndi_sender:
             return
         if pixmap is None:
             pixmap = self._last_ndi_pixmap
@@ -1878,7 +1920,7 @@ class PDFPresenter(QMainWindow):
     def stop_ndi_sender(self):
         self._ndi_timer.stop()
         self._last_ndi_pixmap = None
-        if self.ndi_sender is not None:
+        if self.ndi_sender is not None and ndi is not None:
             try:
                 ndi.send_destroy(self.ndi_sender)
             except Exception:
